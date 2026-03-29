@@ -1,0 +1,80 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // Helper Functions
+    // ============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // ============================================================
+    // Users Collection
+    // ============================================================
+
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isOwner(userId) || isAdmin();
+
+      // Only the system (admin) can create/update user documents
+      // Users cannot modify their own balance or role directly
+      allow create: if isOwner(userId) &&
+        request.resource.data.balance == 0 &&
+        request.resource.data.role == 'user';
+
+      allow update: if isAdmin();
+    }
+
+    // ============================================================
+    // Deposits Collection
+    // ============================================================
+
+    match /deposits/{depositId} {
+      // Users can read their own deposits; admins can read all
+      allow read: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid || isAdmin());
+
+      // Users can create a deposit for themselves only
+      // They cannot set status to anything other than 'pending'
+      allow create: if isAuthenticated() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.amount > 0 &&
+        request.resource.data.amount <= 100000;
+
+      // Only admins can update deposits (approve/reject)
+      allow update: if isAdmin();
+
+      // No one can delete deposits
+      allow delete: if false;
+    }
+
+    // ============================================================
+    // Orders Collection
+    // ============================================================
+
+    match /orders/{orderId} {
+      // Users can read their own orders; admins can read all
+      allow read: if isAuthenticated() &&
+        (resource.data.userId == request.auth.uid || isAdmin());
+
+      // Orders are created only via backend API routes (server-side)
+      // Direct client writes are not allowed
+      allow create: if false;
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+  }
+}
